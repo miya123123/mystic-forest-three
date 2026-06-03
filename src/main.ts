@@ -97,6 +97,20 @@ const playerWalkColumns = 2;
 const playerWalkRows = 2;
 const playerWalkFrameCount = playerWalkColumns * playerWalkRows;
 const playerWalkFramesPerSecond = 8;
+type CompanionRole = 'thief' | 'swordsman' | 'wizard';
+type CompanionRenderVariant = {
+  row: number;
+  flipX: 1 | -1;
+};
+const companionWalkColumns = 4;
+const companionWalkRows = 4;
+const companionWalkFrameCount = companionWalkColumns;
+const companionSpriteWidth = 0.78;
+const companionSpriteHeight = 1.16;
+const companionFramePixelHeight = 96;
+const companionFrameBottomPaddingPixels = 6;
+const companionFootPaddingWorld = (companionFrameBottomPaddingPixels / companionFramePixelHeight) * companionSpriteHeight;
+const companionWalkFramesPerSecond = 8;
 
 function playerWalkTexture(direction: PlayerDirection): THREE.Texture {
   const texture = textureLoader.load(publicAssetUrl(`sprites/player-walk-${direction}/sheet-transparent.png`));
@@ -109,6 +123,17 @@ function playerWalkTexture(direction: PlayerDirection): THREE.Texture {
   return texture;
 }
 
+function companionWalkTexture(role: CompanionRole): THREE.Texture {
+  const texture = textureLoader.load(publicAssetUrl(`sprites/companions/${role}/sheet-transparent.png`));
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestMipmapNearestFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.repeat.set(1 / companionWalkColumns, 1 / companionWalkRows);
+  return texture;
+}
+
 const playerWalkTextures: Record<PlayerDirection, THREE.Texture> = {
   down: playerWalkTexture('down'),
   'down-left': playerWalkTexture('down-left'),
@@ -118,6 +143,12 @@ const playerWalkTextures: Record<PlayerDirection, THREE.Texture> = {
   'up-right': playerWalkTexture('up-right'),
   right: playerWalkTexture('right'),
   'down-right': playerWalkTexture('down-right'),
+};
+
+const companionWalkTextures: Record<CompanionRole, THREE.Texture> = {
+  thief: companionWalkTexture('thief'),
+  swordsman: companionWalkTexture('swordsman'),
+  wizard: companionWalkTexture('wizard'),
 };
 
 const materials = {
@@ -198,8 +229,9 @@ const materials = {
 const terrainGroup = new THREE.Group();
 const propGroup = new THREE.Group();
 const glowGroup = new THREE.Group();
+const companionGroup = new THREE.Group();
 const playerGroup = new THREE.Group();
-scene.add(terrainGroup, propGroup, glowGroup, playerGroup);
+scene.add(terrainGroup, propGroup, glowGroup, companionGroup, playerGroup);
 
 const hemiLight = new THREE.HemisphereLight(0xb7f5ff, 0x213412, 3.2);
 scene.add(hemiLight);
@@ -535,8 +567,67 @@ const playerShadow = new THREE.Mesh(new THREE.CircleGeometry(0.34, 18), material
 playerShadow.rotation.x = -Math.PI / 2;
 playerGroup.add(playerShadow);
 
-const pressedKeys = new Set<string>();
+type Companion = {
+  role: CompanionRole;
+  position: THREE.Vector3;
+  facingWorld: THREE.Vector3;
+  material: THREE.MeshBasicMaterial;
+  sprite: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  shadow: THREE.Mesh<THREE.CircleGeometry, THREE.Material>;
+  texture: THREE.Texture;
+  currentFrame: number;
+  currentRow: number;
+  currentFlipX: 1 | -1;
+};
+
+type TrailPoint = {
+  position: THREE.Vector3;
+  direction: PlayerDirection;
+  distance: number;
+};
+
 const playerFacingWorld = new THREE.Vector3(0, 0, 1);
+const companionSpecs: Array<{ role: CompanionRole; spacing: number }> = [
+  { role: 'thief', spacing: 0.78 },
+  { role: 'swordsman', spacing: 1.56 },
+  { role: 'wizard', spacing: 2.34 },
+];
+const companionTrail: TrailPoint[] = [];
+let companionTrailDistance = 0;
+
+function createCompanion(role: CompanionRole): Companion {
+  const texture = companionWalkTextures[role];
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const sprite = new THREE.Mesh(new THREE.PlaneGeometry(companionSpriteWidth, companionSpriteHeight), material);
+  sprite.renderOrder = 9;
+  companionGroup.add(sprite);
+
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.29, 18), materials.shadow.clone());
+  shadow.rotation.x = -Math.PI / 2;
+  companionGroup.add(shadow);
+
+  return {
+    role,
+    position: playerPosition.clone(),
+    facingWorld: playerFacingWorld.clone(),
+    material,
+    sprite,
+    shadow,
+    texture,
+    currentFrame: -1,
+    currentRow: -1,
+    currentFlipX: 1,
+  };
+}
+
+const companions = companionSpecs.map((spec) => createCompanion(spec.role));
+
+const pressedKeys = new Set<string>();
 let currentPlayerDirection: PlayerDirection = 'down';
 let currentPlayerTextureDirection: PlayerDirection = 'down';
 let currentPlayerFlipX = 1;
@@ -581,11 +672,149 @@ function setPlayerFrame(direction: PlayerDirection, frame: number): void {
   playerWalkTextures[textureDirection].offset.set(col / playerWalkColumns, (playerWalkRows - 1 - row) / playerWalkRows);
 }
 
+function companionRenderVariant(direction: PlayerDirection): CompanionRenderVariant {
+  switch (direction) {
+    case 'up':
+      return { row: 3, flipX: 1 };
+    case 'up-left':
+      return { row: 2, flipX: 1 };
+    case 'up-right':
+      return { row: 2, flipX: -1 };
+    case 'left':
+    case 'down-left':
+      return { row: 1, flipX: 1 };
+    case 'right':
+    case 'down-right':
+      return { row: 1, flipX: -1 };
+    case 'down':
+    default:
+      return { row: 0, flipX: 1 };
+  }
+}
+
+function setCompanionFrame(companion: Companion, direction: PlayerDirection, frame: number): void {
+  const { row, flipX } = companionRenderVariant(direction);
+
+  if (flipX !== companion.currentFlipX) {
+    companion.currentFlipX = flipX;
+    companion.sprite.scale.x = flipX;
+  }
+
+  if (frame === companion.currentFrame && row === companion.currentRow) return;
+  companion.currentFrame = frame;
+  companion.currentRow = row;
+  companion.texture.offset.set(frame / companionWalkColumns, (companionWalkRows - 1 - row) / companionWalkRows);
+}
+
+function initializeCompanionTrail(): void {
+  const maxSpacing = companionSpecs[companionSpecs.length - 1].spacing + 0.9;
+  companionTrail.length = 0;
+  companionTrailDistance = maxSpacing;
+
+  for (let i = 0; i <= 8; i += 1) {
+    const distance = (maxSpacing / 8) * i;
+    const position = playerPosition.clone().addScaledVector(playerFacingWorld, distance - maxSpacing);
+    companionTrail.push({
+      position,
+      direction: 'down',
+      distance,
+    });
+  }
+
+  companions.forEach((companion, index) => {
+    companion.position.copy(playerPosition).addScaledVector(playerFacingWorld, -companionSpecs[index].spacing);
+  });
+}
+
+function recordCompanionTrail(direction: PlayerDirection): void {
+  const lastPoint = companionTrail[companionTrail.length - 1];
+  if (!lastPoint) {
+    companionTrail.push({
+      position: playerPosition.clone(),
+      direction,
+      distance: companionTrailDistance,
+    });
+    return;
+  }
+
+  const stepDistance = lastPoint.position.distanceTo(playerPosition);
+  if (stepDistance < 0.015) {
+    lastPoint.direction = direction;
+    return;
+  }
+
+  companionTrailDistance += stepDistance;
+  companionTrail.push({
+    position: playerPosition.clone(),
+    direction,
+    distance: companionTrailDistance,
+  });
+
+  const maxTrailLength = companionSpecs[companionSpecs.length - 1].spacing + 1.2;
+  while (companionTrail.length > 2 && companionTrailDistance - companionTrail[0].distance > maxTrailLength) {
+    companionTrail.shift();
+  }
+}
+
+function sampleCompanionTrail(spacing: number): { position: THREE.Vector3; direction: PlayerDirection } {
+  const firstPoint = companionTrail[0];
+  const lastPoint = companionTrail[companionTrail.length - 1];
+  if (!firstPoint || !lastPoint) {
+    return { position: playerPosition.clone(), direction: currentPlayerDirection };
+  }
+
+  const targetDistance = Math.max(lastPoint.distance - spacing, firstPoint.distance);
+  for (let i = 1; i < companionTrail.length; i += 1) {
+    const previous = companionTrail[i - 1];
+    const next = companionTrail[i];
+    if (next.distance < targetDistance) continue;
+    const segmentLength = Math.max(next.distance - previous.distance, 0.0001);
+    const t = THREE.MathUtils.clamp((targetDistance - previous.distance) / segmentLength, 0, 1);
+    return {
+      position: new THREE.Vector3().lerpVectors(previous.position, next.position, t),
+      direction: next.direction,
+    };
+  }
+
+  return { position: lastPoint.position.clone(), direction: lastPoint.direction };
+}
+
 function updatePlayerPlacement(): void {
   const groundY = surfaceHeightAt(playerPosition.x, playerPosition.z);
   playerPosition.y = groundY;
   playerSprite.position.set(playerPosition.x, groundY + playerSpriteHeight / 2 - playerFootPaddingWorld, playerPosition.z);
   playerShadow.position.set(playerPosition.x, groundY + 0.025, playerPosition.z);
+}
+
+function updateCompanionPlacement(companion: Companion): void {
+  const groundY = surfaceHeightAt(companion.position.x, companion.position.z);
+  companion.position.y = groundY;
+  companion.sprite.position.set(
+    companion.position.x,
+    groundY + companionSpriteHeight / 2 - companionFootPaddingWorld,
+    companion.position.z,
+  );
+  companion.shadow.position.set(companion.position.x, groundY + 0.025, companion.position.z);
+}
+
+function updateCompanions(delta: number, elapsed: number, leaderMoving: boolean): void {
+  const followAlpha = 1 - Math.exp(-delta * 14);
+
+  companions.forEach((companion, index) => {
+    const sample = sampleCompanionTrail(companionSpecs[index].spacing);
+    const previousPosition = companion.position.clone();
+    companion.position.lerp(sample.position, followAlpha);
+
+    const moved = previousPosition.distanceTo(companion.position) > 0.006;
+    if (moved) {
+      companion.facingWorld.copy(companion.position).sub(previousPosition).normalize();
+    }
+
+    const direction = moved ? directionFromWorldFacing(companion.facingWorld) : sample.direction;
+    const frame = leaderMoving || moved ? Math.floor((elapsed + index * 0.11) * companionWalkFramesPerSecond) % companionWalkFrameCount : 0;
+    setCompanionFrame(companion, direction, frame);
+    updateCompanionPlacement(companion);
+  });
 }
 
 window.addEventListener('keydown', (event) => {
@@ -619,11 +848,11 @@ function directionFromWorldFacing(facing: THREE.Vector3): PlayerDirection {
   return directions[octant];
 }
 
-function facePlayerPlaneToCamera(): void {
-  const toCamera = camera.position.clone().sub(playerSprite.position);
+function facePlaneToCamera(sprite: THREE.Object3D): void {
+  const toCamera = camera.position.clone().sub(sprite.position);
   toCamera.y = 0;
   if (toCamera.lengthSq() > 0.0001) {
-    playerSprite.rotation.y = Math.atan2(toCamera.x, toCamera.z);
+    sprite.rotation.y = Math.atan2(toCamera.x, toCamera.z);
   }
 }
 
@@ -632,29 +861,42 @@ function updatePlayer(delta: number, elapsed: number): void {
   const inputY = Number(pressedKeys.has('w') || pressedKeys.has('arrowup')) - Number(pressedKeys.has('s') || pressedKeys.has('arrowdown'));
   const { right, up } = cameraGroundBasis();
   const movement = right.multiplyScalar(inputX).add(up.multiplyScalar(inputY));
+  let leaderMoving = false;
 
   if (movement.lengthSq() > 0) {
+    leaderMoving = true;
     movement.normalize();
     playerFacingWorld.copy(movement);
     const step = movement.multiplyScalar(delta * 2.5);
     playerPosition.x = THREE.MathUtils.clamp(playerPosition.x + step.x, -7.6, 7.6);
     playerPosition.z = THREE.MathUtils.clamp(playerPosition.z + step.z, -5.6, 5.6);
-    setPlayerFrame(directionFromWorldFacing(playerFacingWorld), Math.floor(elapsed * playerWalkFramesPerSecond) % playerWalkFrameCount);
+    const direction = directionFromWorldFacing(playerFacingWorld);
+    setPlayerFrame(direction, Math.floor(elapsed * playerWalkFramesPerSecond) % playerWalkFrameCount);
+    recordCompanionTrail(direction);
 
     const follow = new THREE.Vector3(playerPosition.x, 0.6, playerPosition.z);
     const targetDelta = follow.sub(controls.target).multiplyScalar(0.06);
     controls.target.add(targetDelta);
     camera.position.add(targetDelta);
   } else {
-    setPlayerFrame(directionFromWorldFacing(playerFacingWorld), 0);
+    const direction = directionFromWorldFacing(playerFacingWorld);
+    setPlayerFrame(direction, 0);
+    recordCompanionTrail(direction);
   }
 
   updatePlayerPlacement();
-  facePlayerPlaneToCamera();
+  updateCompanions(delta, elapsed, leaderMoving);
+  facePlaneToCamera(playerSprite);
+  companions.forEach((companion) => facePlaneToCamera(companion.sprite));
 }
 
 setPlayerFrame('down', 0);
+initializeCompanionTrail();
 updatePlayerPlacement();
+companions.forEach((companion) => {
+  setCompanionFrame(companion, 'down', 0);
+  updateCompanionPlacement(companion);
+});
 
 function resize(): void {
   const width = window.innerWidth;
