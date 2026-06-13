@@ -111,6 +111,7 @@ const companionFramePixelHeight = 96;
 const companionFrameBottomPaddingPixels = 6;
 const companionFootPaddingWorld = (companionFrameBottomPaddingPixels / companionFramePixelHeight) * companionSpriteHeight;
 const companionWalkFramesPerSecond = 8;
+const companionIdleFrame = 1;
 
 function playerWalkTexture(direction: PlayerDirection): THREE.Texture {
   const texture = textureLoader.load(publicAssetUrl(`sprites/player-walk-${direction}/sheet-transparent.png`));
@@ -706,6 +707,11 @@ function setCompanionFrame(companion: Companion, direction: PlayerDirection, fra
   companion.texture.offset.set(frame / companionWalkColumns, (companionWalkRows - 1 - row) / companionWalkRows);
 }
 
+function companionFrameForMotion(isWalking: boolean, elapsed: number, index: number): number {
+  if (!isWalking) return companionIdleFrame;
+  return Math.floor((elapsed + index * 0.11) * companionWalkFramesPerSecond) % companionWalkFrameCount;
+}
+
 function initializeCompanionTrail(): void {
   const maxSpacing = companionSpecs[companionSpecs.length - 1].spacing + 0.9;
   companionTrail.length = 0;
@@ -810,8 +816,9 @@ function updateCompanions(delta: number, elapsed: number, leaderMoving: boolean)
       companion.facingWorld.copy(companion.position).sub(previousPosition).normalize();
     }
 
-    const direction = moved ? directionFromWorldFacing(companion.facingWorld) : sample.direction;
-    const frame = leaderMoving || moved ? Math.floor((elapsed + index * 0.11) * companionWalkFramesPerSecond) % companionWalkFrameCount : 0;
+    const walking = leaderMoving && moved;
+    const direction = walking ? directionFromWorldFacing(companion.facingWorld) : sample.direction;
+    const frame = companionFrameForMotion(walking, elapsed, index);
     setCompanionFrame(companion, direction, frame);
     updateCompanionPlacement(companion);
   });
@@ -894,7 +901,7 @@ setPlayerFrame('down', 0);
 initializeCompanionTrail();
 updatePlayerPlacement();
 companions.forEach((companion) => {
-  setCompanionFrame(companion, 'down', 0);
+  setCompanionFrame(companion, 'down', companionIdleFrame);
   updateCompanionPlacement(companion);
 });
 
