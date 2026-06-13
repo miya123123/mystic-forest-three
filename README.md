@@ -2,7 +2,13 @@
 
 ローポリボクセル風の神秘の森を探索できる、Vite + TypeScript + Three.js 製のブラウザゲームです。
 
-段差のある浮遊島、川、橋、石畳、発光クリスタル、ランタン、松や巨木を3Dシーンとして構成しています。プレイヤーキャラクターは8方向の歩行スプライトで表示し、カメラ角度と移動方向に応じて画像を切り替えます。
+段差のある浮遊島、川、橋、石畳、発光クリスタル、ランタン、松や巨木を3Dシーンとして構成しています。プレイヤーと3人の companion はスプライトで表示し、カメラ角度と移動方向に応じて見た目やアニメーションを切り替えます。
+
+## GitHub Pages
+
+https://miya123123.github.io/mystic-forest-three/
+
+`main` ブランチへ push すると、GitHub Actions が `npm ci` と `npm run build` を実行し、`dist/` を GitHub Pages にデプロイします。
 
 ## 起動方法
 
@@ -36,7 +42,10 @@ npm run build
 - `OrbitControls` でマップを回転可能にし、カメラ方向を元にプレイヤー移動方向を算出
 - プレイヤーは透明Planeメッシュで描画し、8方向の歩行スプライトを選択して回転表現
 - 移動中のみ4フレームの歩行アニメーションを再生
+- thief / swordsman / wizard の companion がドラクエ風に隊列追従
+- companion はプレイヤー移動中のみ歩行アニメーションし、停止時は固定フレームで待機
 - 地形の高さに合わせてプレイヤーの足元と影を追従
+- GitHub Actions で GitHub Pages に自動デプロイ
 
 ## 使用技術
 
@@ -99,6 +108,7 @@ mystic-forest-three/
       crystal-emissive-atlas.png
       mushroom-cap-pink-v2.png
     sprites/
+      companions/
       player-walk-down/
       player-walk-up/
       player-walk-left/
@@ -118,3 +128,4 @@ mystic-forest-three/
 - ブラウザコンソールに実行時エラーが出ないこと
 - キー入力でプレイヤーが移動すること
 - カメラ角度に応じてプレイヤーの方向スプライトが切り替わること
+- GitHub Pages 用の `base: '/mystic-forest-three/'` でビルドされること
